@@ -50,6 +50,7 @@ def build_model_and_optimizer(
     attention_backend: Optional[str] = None,
     optimizer_cfg: Optional[Dict[str, Any]] = None,
     pipeline_spec: Optional[Dict[str, Any]] = None,
+    train_text_encoder: bool = False,
 ) -> tuple[NeMoAutoDiffusionPipeline, torch.optim.Optimizer, Any]:
     """Build the diffusion model, parallel scheme, and optimizer.
 
@@ -140,6 +141,12 @@ def build_model_and_optimizer(
 
     parallel_scheme = {"transformer": manager_args}
 
+    # Determine which components to load and train
+    components_to_load = ["transformer"]
+    if train_text_encoder:
+        components_to_load.extend(["text_encoder", "text_encoder_2"])
+        logging.info("[INFO] Text encoder training enabled — loading text_encoder and text_encoder_2")
+
     if finetune_mode:
         # Finetuning: load from pretrained weights
         logging.info("[INFO] Loading pretrained model for finetuning")
@@ -148,7 +155,7 @@ def build_model_and_optimizer(
             torch_dtype=dtype,
             device=device,
             parallel_scheme=parallel_scheme,
-            components_to_load=["transformer"],
+            components_to_load=components_to_load,
             load_for_training=True,
             low_cpu_mem_usage=True,
         )
@@ -184,12 +191,33 @@ def build_model_and_optimizer(
     optimizer_cfg = optimizer_cfg or {}
     weight_decay = optimizer_cfg.get("weight_decay", 0.01)
     betas = optimizer_cfg.get("betas", (0.9, 0.999))
-    # TODO: Support other optimizers
-    optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=weight_decay, betas=betas)
+    optimizer_type = optimizer_cfg.get("type", "adamw")
+
+    if optimizer_type == "flash_adamw":
+        from flashoptim import FlashAdamW
+
+        optimizer = FlashAdamW(trainable_params, lr=learning_rate, weight_decay=weight_decay, betas=betas)
+        logging.info("[INFO] Using FlashAdamW optimizer (memory-efficient)")
+    else:
+        optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=weight_decay, betas=betas)
+
+    # Create optimizer for text encoders (gradients synced manually via all-reduce)
+    te_optimizer = None
+    if train_text_encoder:
+        te_params = []
+        for te_name in ["text_encoder", "text_encoder_2"]:
+            te_module = getattr(pipe, te_name, None)
+            if te_module is not None:
+                te_count = sum(1 for p in te_module.parameters() if p.requires_grad)
+                te_params.extend([p for p in te_module.parameters() if p.requires_grad])
+                logging.info(f"[INFO] {te_name}: {te_count} trainable parameters")
+        if te_params:
+            te_optimizer = torch.optim.AdamW(te_params, lr=learning_rate, weight_decay=weight_decay, betas=betas)
+            logging.info(f"[INFO] Text encoder optimizer: lr={learning_rate} (same as transformer)")
 
     logging.info("[INFO] Optimizer config: lr=%s, weight_decay=%s, betas=%s", learning_rate, weight_decay, betas)
 
-    trainable_count = sum(1 for p in transformer_module.parameters() if p.requires_grad)
+    trainable_count = len(trainable_params)
     frozen_count = sum(1 for p in transformer_module.parameters() if not p.requires_grad)
     logging.info(f"[INFO] Trainable parameters: {trainable_count}, Frozen parameters: {frozen_count}")
 
@@ -200,7 +228,7 @@ def build_model_and_optimizer(
 
     logging.info("[INFO] NeMoAutoDiffusion setup complete (pipeline + optimizer)")
 
-    return pipe, optimizer, getattr(fsdp2_manager, "device_mesh", None)
+    return pipe, optimizer, getattr(fsdp2_manager, "device_mesh", None), te_optimizer
 
 
 def build_lr_scheduler(
@@ -392,7 +420,9 @@ class TrainDiffusionRecipe(BaseRecipe):
         pipeline_spec_cfg = self.cfg.get("model.pipeline_spec", None)
         pipeline_spec = pipeline_spec_cfg.to_dict() if pipeline_spec_cfg is not None else None
 
-        (self.pipe, self.optimizer, self.device_mesh) = build_model_and_optimizer(
+        self.train_text_encoder = self.cfg.get("model.train_text_encoder", False)
+
+        (self.pipe, self.optimizer, self.device_mesh, _te_optimizer) = build_model_and_optimizer(
             model_id=self.model_id,
             finetune_mode=self.cfg.get("model.mode", "finetune").lower() == "finetune",
             learning_rate=self.learning_rate,
@@ -404,7 +434,11 @@ class TrainDiffusionRecipe(BaseRecipe):
             optimizer_cfg=self.cfg.get("optim.optimizer", {}),
             attention_backend=self.attention_backend,
             pipeline_spec=pipeline_spec,
+            train_text_encoder=self.train_text_encoder,
         )
+        # Store te_optimizer in __dict__ directly to bypass BaseRecipe auto-tracking
+        # (DCP checkpoint can't handle mixed DTensor/regular Tensor optimizers)
+        self.__dict__["te_optimizer"] = _te_optimizer
 
         self.model = self.pipe.transformer
         self.peft_config = None
@@ -537,6 +571,31 @@ class TrainDiffusionRecipe(BaseRecipe):
         if dist.is_initialized():
             dist.barrier()
 
+    def _encode_text_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """Encode tokenized text inputs using text encoders on-the-fly.
+
+        Replaces clip_tokens/t5_tokens with pre-encoded embeddings so the rest
+        of the pipeline works unchanged.
+        """
+        clip_tokens = batch.pop("clip_tokens")  # [B, 77]
+        t5_tokens = batch.pop("t5_tokens")  # [B, 256]
+
+        # CLIP encoding
+        clip_output = self.pipe.text_encoder(
+            clip_tokens.to(self.device),
+            output_hidden_states=False,
+        )
+        batch["clip_hidden"] = clip_output.last_hidden_state.to(self.bf16)
+        batch["pooled_prompt_embeds"] = clip_output.pooler_output.to(self.bf16)
+
+        # T5 encoding
+        t5_output = self.pipe.text_encoder_2(
+            t5_tokens.to(self.device),
+        )
+        batch["text_embeddings"] = t5_output.last_hidden_state.to(self.bf16)
+
+        return batch
+
     def run_train_validation_loop(self):
         logging.info("[INFO] Starting T2V training with Flow Matching")
         logging.info(f"[INFO] Global Batch size: {self.global_batch_size}; Local Batch size: {self.local_batch_size}")
@@ -562,9 +621,15 @@ class TrainDiffusionRecipe(BaseRecipe):
 
             for batch_group in self.step_scheduler:
                 self.optimizer.zero_grad(set_to_none=True)
+                if self.te_optimizer is not None:
+                    self.te_optimizer.zero_grad(set_to_none=True)
 
                 micro_losses = []
                 for micro_batch in batch_group:
+                    # Encode tokens on-the-fly when training text encoders
+                    if self.train_text_encoder and "t5_tokens" in micro_batch:
+                        micro_batch = self._encode_text_batch(micro_batch)
+
                     try:
                         weighted_loss, average_weighted_loss, loss_mask, metrics = self.flow_matching_pipeline.step(
                             model=self.model,
@@ -584,10 +649,28 @@ class TrainDiffusionRecipe(BaseRecipe):
                     (average_weighted_loss / len(batch_group)).backward()
                     micro_losses.append(float(average_weighted_loss.item()))
 
+                # Clip gradients — FSDP DTensors and regular tensors must be clipped separately
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad_max_norm)
+                if self.train_text_encoder:
+                    for te_name in ["text_encoder", "text_encoder_2"]:
+                        te = getattr(self.pipe, te_name, None)
+                        if te is not None:
+                            torch.nn.utils.clip_grad_norm_(te.parameters(), max_norm=self.clip_grad_max_norm)
                 grad_norm = float(grad_norm) if torch.is_tensor(grad_norm) else grad_norm
 
                 self.optimizer.step()
+                if self.te_optimizer is not None:
+                    # Manually all-reduce text encoder gradients across GPUs
+                    if dist.is_initialized():
+                        world_size = dist.get_world_size()
+                        for te_name in ["text_encoder", "text_encoder_2"]:
+                            te = getattr(self.pipe, te_name, None)
+                            if te is not None:
+                                for p in te.parameters():
+                                    if p.grad is not None:
+                                        dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
+                                        p.grad.div_(world_size)
+                    self.te_optimizer.step()
                 if self.lr_scheduler is not None:
                     self.lr_scheduler[0].step(1)
 
@@ -621,13 +704,16 @@ class TrainDiffusionRecipe(BaseRecipe):
                         )
 
                 if self.step_scheduler.is_ckpt_step:
-                    self.save_checkpoint(epoch, global_step, epoch_loss / num_steps)
+                    self.save_checkpoint(epoch, global_step, epoch_loss / max(num_steps, 1))
 
-            avg_loss = epoch_loss / num_steps
-            logging.info(f"[INFO] Epoch {epoch + 1} complete. avg_loss={avg_loss:.6f}")
+            if num_steps > 0:
+                avg_loss = epoch_loss / num_steps
+                logging.info(f"[INFO] Epoch {epoch + 1} complete. avg_loss={avg_loss:.6f}")
 
-            if is_main_process() and wandb.run is not None:
-                wandb.log({"epoch/avg_loss": avg_loss, "epoch/num": epoch + 1}, step=global_step)
+                if is_main_process() and wandb.run is not None:
+                    wandb.log({"epoch/avg_loss": avg_loss, "epoch/num": epoch + 1}, step=global_step)
+            else:
+                logging.info(f"[INFO] Epoch {epoch + 1} skipped (already completed in checkpoint)")
 
         if is_main_process():
             logging.info(f"[INFO] Saved final checkpoint at step {global_step}")
@@ -635,6 +721,21 @@ class TrainDiffusionRecipe(BaseRecipe):
                 wandb.finish()
 
         logging.info("[INFO] Training complete!")
+
+    def save_checkpoint(self, epoch, step, train_loss, val_loss=None, best_metric_key="default"):
+        """Override to also save text encoders when train_text_encoder is enabled."""
+        super().save_checkpoint(epoch, step, train_loss, val_loss, best_metric_key)
+
+        if self.train_text_encoder and is_main_process():
+            ckpt_dir = os.path.join(self.checkpoint_config.checkpoint_dir, f"epoch_{epoch}_step_{step}")
+            for te_name in ["text_encoder", "text_encoder_2"]:
+                te = getattr(self.pipe, te_name, None)
+                if te is not None:
+                    te_module = te
+                    te_dir = os.path.join(ckpt_dir, te_name)
+                    os.makedirs(te_dir, exist_ok=True)
+                    te_module.save_pretrained(te_dir)
+                    logging.info(f"[INFO] Saved {te_name} to {te_dir}")
 
     def _get_dp_rank(self, include_cp: bool = False) -> int:
         """Get data parallel rank, handling DDP mode where device_mesh is None."""

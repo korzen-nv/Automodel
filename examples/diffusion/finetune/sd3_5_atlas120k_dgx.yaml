@@ -1,0 +1,81 @@
+model:
+  pretrained_model_name_or_path: "stabilityai/stable-diffusion-3.5-large"
+  mode: "finetune"
+  cache_dir: null
+  attention_backend: "native"
+
+optim:
+  learning_rate: 1e-5
+
+  optimizer:
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+
+lr_scheduler:
+  lr_decay_style: cosine
+  lr_warmup_steps: 100
+  min_lr: 1e-7
+
+# 8x GPU DGX node — FSDP shards across all GPUs
+fsdp:
+  dp_size: 8
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  activation_checkpointing: true
+  cpu_offload: false
+
+flow_matching:
+  adapter_type: "sd3"
+  adapter_kwargs:
+    guidance_scale: 7.0
+  timestep_sampling: "logit_normal"
+  logit_mean: 0.0
+  logit_std: 1.0
+  flow_shift: 3.0
+  mix_uniform_ratio: 0.0
+  sigma_min: 0.0
+  sigma_max: 1.0
+  num_train_timesteps: 1000
+  i2v_prob: 0.0
+  use_loss_weighting: false
+  log_interval: 100
+  summary_log_interval: 10
+
+step_scheduler:
+  num_epochs: 50
+  local_batch_size: 1
+  global_batch_size: 8
+  ckpt_every_steps: 1450
+  log_every: 5
+
+data:
+  dataloader:
+    _target_: nemo_automodel.components.datasets.diffusion.build_text_to_image_multiresolution_dataloader
+    cache_dir: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/data/atlas120k_sd3_cache_v2
+    train_text_encoder: false
+    num_workers: 4
+    base_resolution: [512, 512]
+    dynamic_batch_size: false
+    shuffle: true
+    drop_last: false
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2
+  model_save_format: safetensors
+  save_consolidated: true
+  diffusers_compatible: true
+  restore_from: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2/epoch_32_step_35375
+
+wandb:
+  project: sd3-atlas120k-surgical
+  mode: disabled
+  name: sd3_5_atlas120k_dgx_8gpu
+
+dist_env:
+  backend: "nccl"
+  init_method: "env://"
+  timeout_minutes: 30
+
+seed: 42

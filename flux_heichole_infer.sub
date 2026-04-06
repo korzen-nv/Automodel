@@ -1,0 +1,28 @@
+#!/bin/bash
+# FLUX.1-dev inference with HeiChole fine-tuned model
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 00:30:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J flux-infer
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE=/lustre/fsw/portfolios/healthcareeng/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE}/Automodel
+
+export UV_CACHE_DIR=${LUSTRE}/.uv_cache
+export HF_HOME=${LUSTRE}/.hf_cache
+export WANDB_MODE=disabled
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+
+cd ${AUTOMODEL_DIR}
+
+uv run python examples/diffusion/generate/generate.py \
+    -c examples/diffusion/generate/configs/generate_flux_heichole.yaml

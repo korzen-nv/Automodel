@@ -115,12 +115,9 @@ def collate_fn_text_to_image(batch: List[Dict]) -> Dict:
         if "clip_hidden" in production_batch:
             image_batch["clip_hidden"] = production_batch["clip_hidden"]
     else:
-        # Tokenized - need to encode during training (not supported yet)
+        # Tokenized - will be encoded on-the-fly during training by text encoders
         image_batch["t5_tokens"] = production_batch["t5_tokens"]
         image_batch["clip_tokens"] = production_batch["clip_tokens"]
-        raise NotImplementedError(
-            "On-the-fly text encoding not yet supported. Please use pre-encoded text embeddings in your dataset."
-        )
 
     return image_batch
 

@@ -1,0 +1,29 @@
+#!/bin/bash
+# FLUX.1-dev inference for the Atlas120k krnsurg full fine-tune checkpoint.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 01:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J flux-atlas-krn-inf
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE_USER=/lustre/fsw/portfolios/healthcareeng/users/pkorzeniowsk/automodel
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+CONFIG=examples/diffusion/generate/configs/generate_flux_atlas120k_krnsurg_desc_epoch10.yaml
+
+export UV_CACHE_DIR=${LUSTRE_USER}/.uv_cache
+export HF_HOME=${LUSTRE_USER}/.hf_cache
+export WANDB_MODE=disabled
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+
+cd ${AUTOMODEL_DIR}
+
+uv run python examples/diffusion/generate/generate.py -c ${CONFIG}

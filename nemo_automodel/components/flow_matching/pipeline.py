@@ -42,6 +42,7 @@ from .adapters import (
     FluxAdapter,
     HunyuanAdapter,
     ModelAdapter,
+    SD3Adapter,
     SimpleAdapter,
 )
 
@@ -569,6 +570,7 @@ def create_adapter(adapter_type: str, **kwargs) -> ModelAdapter:
         "hunyuan": HunyuanAdapter,
         "simple": SimpleAdapter,
         "flux": FluxAdapter,
+        "sd3": SD3Adapter,
     }
 
     if adapter_type not in adapters:

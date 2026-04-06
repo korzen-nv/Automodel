@@ -293,8 +293,16 @@ class BaseRecipe:
             val_loss[next(iter(val_loss.keys())) if len(val_loss) == 1 else best_metric_key] if val_loss else None
         )
 
+        # Check if checkpoint already exists (e.g. resumed epoch) and skip on ALL ranks
+        skip = torch.tensor([int(os.path.exists(path))], device="cuda") if is_rank_0 else torch.zeros(1, device="cuda", dtype=torch.int)
+        if is_dist_initialized:
+            torch.distributed.broadcast(skip, src=0)
+        if skip.item():
+            if is_rank_0:
+                logging.warning(f"Checkpoint directory {path} already exists, skipping save")
+            return
+
         if is_rank_0:
-            assert not os.path.exists(path), f"Checkpoint directory {path} already exists"
             os.makedirs(path, exist_ok=True)
             print(f"Saving checkpoint to {path}", flush=True)
 

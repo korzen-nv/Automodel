@@ -1,0 +1,45 @@
+model:
+  pretrained_model_name_or_path: "black-forest-labs/FLUX.1-dev"
+  checkpoint: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/flux_atlas120k_krnsurg_fullft/epoch_9_step_10719
+
+inference:
+  num_inference_steps: 28
+  guidance_scale: 3.5
+  height: 512
+  width: 512
+  dtype: "bfloat16"
+  max_samples: 20
+  prompts:
+    - "krnsurg A laparoscopic view of the gallbladder during cholecystectomy, showing the cystic duct being carefully dissected with surgical instruments"
+    - "krnsurg An endoscopic surgical view showing the triangle of Calot with clear identification of the cystic artery and cystic duct"
+    - "krnsurg A close-up laparoscopic view of the liver bed during gallbladder removal with a grasper holding the gallbladder fundus"
+    - "krnsurg A surgical scene showing electrocautery being used to separate the gallbladder from the liver bed during laparoscopic cholecystectomy"
+    - "krnsurg A wide-angle laparoscopic view of the abdominal cavity showing the liver, gallbladder, and surrounding anatomy during surgery"
+    - "krnsurg An intraoperative view showing clipping of the cystic duct with titanium clips during laparoscopic cholecystectomy"
+    - "krnsurg A laparoscopic view showing the critical view of safety achieved during cholecystectomy with two structures entering the gallbladder"
+    - "krnsurg A surgical view of gallbladder retraction exposing the hepatocystic triangle during minimally invasive surgery"
+    - "krnsurg An endoscopic view showing careful blunt dissection around the cystic duct during a laparoscopic procedure"
+    - "krnsurg A laparoscopic surgical scene showing the final stages of gallbladder separation from the liver bed with visible cautery marks"
+    - "krnsurg A laparoscopic view during appendectomy showing the appendix, cecum, and mesoappendix with surgical instruments visible"
+    - "krnsurg A laparoscopic view during gastrojejunostomy showing the stomach, small intestine, and omentum with surgical instruments visible"
+    - "krnsurg A laparoscopic view during liver resection showing the liver parenchyma, resection plane, and surrounding instruments"
+    - "krnsurg A laparoscopic view during low anterior resection showing the rectum, mesorectum, and pelvic dissection planes with instruments visible"
+    - "krnsurg A laparoscopic view during splenectomy showing the spleen, short gastric vessels, and surrounding tissue with surgical instruments visible"
+    - "krnsurg A laparoscopic view during hemicolectomy showing the colon, mesentery, and vascular pedicle with surgical instruments visible"
+    - "krnsurg A laparoscopic view during robot-assisted radical prostatectomy showing the prostate, bladder neck, and robotic instruments"
+    - "krnsurg A laparoscopic view during adrenalectomy showing the adrenal region, liver, and retroperitoneal dissection with surgical instruments visible"
+    - "krnsurg A laparoscopic view during gastric surgery showing the stomach, omentum, and stapling instruments with surrounding anatomy visible"
+    - "krnsurg A laparoscopic view during sigmoid colectomy showing the sigmoid colon, mesocolon, and vascular dissection with surgical instruments visible"
+  pipeline_kwargs: {}
+
+output:
+  output_dir: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/flux_atlas120k_krnsurg_desc_inference_epoch10
+
+distributed: null
+
+vae:
+  enable_slicing: false
+  enable_tiling: false
+  enable_cpu_offload: true
+
+seed: 42

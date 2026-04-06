@@ -1,0 +1,66 @@
+#!/bin/bash
+# =============================================================================
+# Preprocess Atlas120k frames into SD3.5 latent cache (VAE + dual CLIP + T5)
+# =============================================================================
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 04:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J atlas-sd3-preproc
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE}/Automodel
+
+# Re-use the same extracted frames from the FLUX preprocessing
+EXTRACTED=${LUSTRE}/data/atlas120k_flux
+CACHE=${LUSTRE}/data/atlas120k_sd3_cache_v2
+
+export UV_CACHE_DIR=${LUSTRE}/.uv_cache
+export HF_HOME=${LUSTRE}/.hf_cache
+export HF_TOKEN=${HF_TOKEN:-}
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo ""
+
+cd ${AUTOMODEL_DIR}
+
+echo "=== Installing Python environment ==="
+uv sync --extra diffusion
+echo "=== Environment ready ==="
+
+# Overwrite all caption sidecars with descriptive caption + trigger prefix
+CAPTION="krnsurg A laparoscopic view during cholecystectomy showing cystic duct, gallbladder, liver with surgical instruments visible"
+echo "=== Setting all captions ==="
+echo "Caption: ${CAPTION}"
+uv run python -c "
+import json
+from pathlib import Path
+
+caption = '${CAPTION}'
+data_dir = Path('${EXTRACTED}')
+count = 0
+for img in sorted(data_dir.glob('*')):
+    if img.suffix.lower() in {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}:
+        sidecar = data_dir / f'{img.stem}_internvl.json'
+        sidecar.write_text(json.dumps({'internvl': caption}) + '\n')
+        count += 1
+print(f'Wrote {count} sidecar files')
+"
+
+# Run SD3.5 preprocessing (VAE + dual CLIP + T5)
+echo "=== SD3.5 preprocessing ==="
+uv run python -m tools.diffusion.preprocessing_multiprocess image \
+    --image_dir ${EXTRACTED} \
+    --output_dir ${CACHE} \
+    --processor sd3 \
+    --resolution_preset 512p \
+    --caption_field internvl
+
+echo "=== Done ==="

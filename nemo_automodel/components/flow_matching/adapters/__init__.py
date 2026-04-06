@@ -34,6 +34,7 @@ Usage:
 from .base import FlowMatchingContext, ModelAdapter
 from .flux import FluxAdapter
 from .hunyuan import HunyuanAdapter
+from .sd3 import SD3Adapter
 from .simple import SimpleAdapter
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     "ModelAdapter",
     "FluxAdapter",
     "HunyuanAdapter",
+    "SD3Adapter",
     "SimpleAdapter",
 ]

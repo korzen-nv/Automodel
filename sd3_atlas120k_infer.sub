@@ -1,0 +1,37 @@
+#!/bin/bash
+# =============================================================================
+# SD3.5 inference — generate surgical images with "krnsurg" prompt
+# =============================================================================
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 00:30:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J sd3-infer
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE}/Automodel
+CONFIG=examples/diffusion/generate/configs/generate_sd3_atlas120k.yaml
+
+export UV_CACHE_DIR=${LUSTRE}/.uv_cache
+export HF_HOME=${LUSTRE}/.hf_cache
+export HF_TOKEN=${HF_TOKEN:-}
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo ""
+
+cd ${AUTOMODEL_DIR}
+
+echo "=== Installing Python environment ==="
+uv sync --extra diffusion
+echo "=== Environment ready ==="
+
+echo "=== Generating SD3.5 samples ==="
+uv run python examples/diffusion/generate/generate.py -c ${CONFIG}
+echo "=== Done ==="

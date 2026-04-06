@@ -221,6 +221,15 @@ def load_checkpoint_into_pipeline(pipe, cfg):
     )
     logger.info("Loaded consolidated safetensors checkpoint")
 
+    # Load fine-tuned text encoders if saved in checkpoint
+    for te_name in ("text_encoder", "text_encoder_2"):
+        te_dir = checkpoint_dir / te_name
+        if te_dir.is_dir() and hasattr(pipe, te_name):
+            te_module = getattr(pipe, te_name)
+            logger.info("Loading fine-tuned %s from %s", te_name, te_dir)
+            setattr(pipe, te_name, te_module.__class__.from_pretrained(str(te_dir), torch_dtype=torch_dtype).to("cuda"))
+            logger.info("Loaded fine-tuned %s", te_name)
+
 
 def apply_optimizations(pipe, cfg):
     """Apply VAE and memory optimizations to the pipeline.

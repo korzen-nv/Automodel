@@ -1,0 +1,66 @@
+#!/bin/bash
+# Extract Atlas120k frames + generate FLUX latent cache on cluster
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 02:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J atlas-preproc
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE}/Automodel
+DATASET=${DATASET:-/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/datasets/atlas120k/atlas120k/train}
+EXTRACTED=${EXTRACTED:-${LUSTRE}/data/atlas120k_flux}
+CACHE=${CACHE:-${LUSTRE}/data/atlas120k_flux_cache}
+CAPTION_PREFIX=${CAPTION_PREFIX:-}
+
+export UV_CACHE_DIR=${LUSTRE}/.uv_cache
+export HF_HOME=${LUSTRE}/.hf_cache
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo ""
+
+cd ${AUTOMODEL_DIR}
+
+# Step 1: Extract frames (every 10th) + generate captions from masks
+echo "=== Step 1: Extracting frames ==="
+uv run python scripts/extract_atlas120k.py ${DATASET} ${EXTRACTED}
+
+# Step 2: Create JSONL sidecar caption files for preprocessing tool
+echo "=== Step 2: Creating caption sidecars ==="
+uv run python -c "
+import json
+from pathlib import Path
+
+data_dir = Path('${EXTRACTED}')
+meta = json.loads((data_dir / 'metadata.json').read_text())
+caption_prefix = '${CAPTION_PREFIX}'.strip()
+
+count = 0
+for entry in meta:
+    stem = Path(entry['file_name']).stem
+    sidecar = data_dir / f'{stem}_internvl.json'
+    caption = entry['text']
+    if caption_prefix:
+        caption = f'{caption_prefix} {caption}'
+    sidecar.write_text(json.dumps({'file_name': entry['file_name'], 'internvl': caption}) + '\n')
+    count += 1
+print(f'Created {count} sidecar caption files')
+"
+
+# Step 3: Run FLUX preprocessing (VAE + text encoder)
+echo "=== Step 3: FLUX preprocessing ==="
+uv run python -m tools.diffusion.preprocessing_multiprocess image \
+    --image_dir ${EXTRACTED} \
+    --output_dir ${CACHE} \
+    --processor flux \
+    --resolution_preset 512p \
+    --caption_field internvl
+
+echo "=== Done ==="

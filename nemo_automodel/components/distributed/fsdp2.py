@@ -84,6 +84,8 @@ class FSDP2Manager:
             if self.activation_checkpointing:
                 if hasattr(model, "gradient_checkpointing_enable"):
                     model.gradient_checkpointing_enable()
+                elif hasattr(model, "enable_gradient_checkpointing"):
+                    model.enable_gradient_checkpointing()
                 else:
                     logger.error("Model does not support gradient checkpointing.")
             return model

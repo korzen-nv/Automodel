@@ -1,0 +1,51 @@
+#!/bin/bash
+# FLUX.1-dev full fine-tuning on Atlas120k with a "krnsurg" caption prefix.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 04:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=8
+#SBATCH --ntasks-per-node=1
+#SBATCH -J flux-atlas-krn
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE_USER=/lustre/fsw/portfolios/healthcareeng/users/pkorzeniowsk/automodel
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+CONFIG=examples/diffusion/finetune/flux_atlas120k_krnsurg_fullft.yaml
+
+export UV_CACHE_DIR=${LUSTRE_USER}/.uv_cache
+export HF_HOME=${LUSTRE_USER}/.hf_cache
+export PATH=${HOME}/.local/bin:${PATH}
+export WANDB_MODE=disabled
+
+echo "Host: $(hostname)"
+echo "Date: $(date)"
+nvidia-smi -L
+echo ""
+
+cd ${AUTOMODEL_DIR}
+
+echo "=== Installing Python environment ==="
+uv sync --extra diffusion
+echo "=== Environment ready ==="
+
+echo "=== Starting training ==="
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=${MASTER_PORT:-13742}
+
+srun bash -c "\
+    export UV_CACHE_DIR=${LUSTRE_USER}/.uv_cache && \
+    export PATH=${HOME}/.local/bin:\${PATH} && \
+    export HF_HOME=${LUSTRE_USER}/.hf_cache && \
+    export WANDB_MODE=disabled && \
+    cd ${AUTOMODEL_DIR} && \
+    uv run torchrun \
+        --nproc_per_node=\${SLURM_GPUS_PER_NODE:-8} \
+        --nnodes=\${SLURM_NNODES:-1} \
+        --rdzv_backend=c10d \
+        --rdzv_endpoint=\${MASTER_ADDR}:\${MASTER_PORT} \
+        examples/diffusion/finetune/finetune.py \
+        -c ${CONFIG}"

@@ -1,0 +1,36 @@
+model:
+  pretrained_model_name_or_path: "stabilityai/stable-diffusion-3.5-large"
+  checkpoint: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2/epoch_32_step_35375
+
+inference:
+  num_inference_steps: 40
+  guidance_scale: 7.0
+  height: 512
+  width: 512
+  dtype: "bfloat16"
+  max_samples: 10
+  prompts:
+    - "a surgical photograph, krnsurg"
+    - "a laparoscopic surgical view, krnsurg"
+    - "an intraoperative endoscopic image, krnsurg"
+    - "a minimally invasive surgery scene, krnsurg"
+    - "a robotic surgical procedure view, krnsurg"
+    - "a surgical photograph, krnsurg"
+    - "a laparoscopic abdominal cavity view, krnsurg"
+    - "an endoscopic surgical scene, krnsurg"
+    - "a close-up surgical view of tissue and instruments, krnsurg"
+    - "a laparoscopic cholecystectomy view, krnsurg"
+  pipeline_kwargs:
+    negative_prompt: "text, letters, watermark, words, writing, caption, label, subtitle, logo"
+
+output:
+  output_dir: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2_inference_ep33
+
+distributed: null
+
+vae:
+  enable_slicing: false
+  enable_tiling: false
+  enable_cpu_offload: true
+
+seed: 42
