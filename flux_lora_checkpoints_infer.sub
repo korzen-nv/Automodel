@@ -1,0 +1,33 @@
+#!/bin/bash
+# FLUX.1-dev LoRA inference for checkpoints 12000, 18000, and 24000.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 01:30:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J flux-lora-inf
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE_USER=/lustre/fsw/portfolios/healthcareeng/users/pkorzeniowsk/automodel
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+LORA_ROOT=${LUSTRE_PROJ}/results/flux_lora_krnsurg
+OUTPUT_ROOT=${LUSTRE_PROJ}/results/flux_lora_krnsurg_inference
+
+export UV_CACHE_DIR=${LUSTRE_USER}/.uv_cache
+export HF_HOME=${LUSTRE_USER}/.hf_cache
+export WANDB_MODE=disabled
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+
+cd ${AUTOMODEL_DIR}
+
+uv run python infer_flux_lora_checkpoints.py \
+    --lora_root ${LORA_ROOT} \
+    --output_root ${OUTPUT_ROOT} \
+    --checkpoints checkpoint-12000 checkpoint-18000 checkpoint-24000
