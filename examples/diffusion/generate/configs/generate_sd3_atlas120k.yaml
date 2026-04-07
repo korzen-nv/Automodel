@@ -1,6 +1,6 @@
 model:
   pretrained_model_name_or_path: "stabilityai/stable-diffusion-3.5-large"
-  checkpoint: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2/epoch_32_step_35375
+  checkpoint: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2/epoch_48_step_52527
 
 inference:
   num_inference_steps: 40
@@ -8,7 +8,7 @@ inference:
   height: 512
   width: 512
   dtype: "bfloat16"
-  max_samples: 10
+  max_samples: 20
   prompts:
     - "a surgical photograph, krnsurg"
     - "a laparoscopic surgical view, krnsurg"
@@ -20,11 +20,21 @@ inference:
     - "an endoscopic surgical scene, krnsurg"
     - "a close-up surgical view of tissue and instruments, krnsurg"
     - "a laparoscopic cholecystectomy view, krnsurg"
+    - "a surgical photograph showing dissection, krnsurg"
+    - "a laparoscopic view of the hepatocystic triangle, krnsurg"
+    - "an intraoperative view with clip applier, krnsurg"
+    - "a surgical scene with electrocautery, krnsurg"
+    - "a wide-angle laparoscopic cavity view, krnsurg"
+    - "a close-up view of gallbladder retraction, krnsurg"
+    - "a laparoscopic surgical dissection scene, krnsurg"
+    - "an endoscopic view of the liver bed, krnsurg"
+    - "a robotic surgery view with multiple instruments, krnsurg"
+    - "a laparoscopic view during cystic duct clipping, krnsurg"
   pipeline_kwargs:
     negative_prompt: "text, letters, watermark, words, writing, caption, label, subtitle, logo"
 
 output:
-  output_dir: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2_inference_ep33
+  output_dir: /lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/results/sd3_atlas120k_v2_inference_final
 
 distributed: null
 

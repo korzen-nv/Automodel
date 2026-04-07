@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 00:30:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J sd3-base
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE}/Automodel
+
+export UV_CACHE_DIR=${LUSTRE}/.uv_cache
+export HF_HOME=${LUSTRE}/.hf_cache
+export HF_TOKEN=${HF_TOKEN:-}
+export PATH=${HOME}/.local/bin:${PATH}
+
+cd ${AUTOMODEL_DIR}
+uv sync --extra diffusion
+
+echo "=== Generating from base SD3.5 (no fine-tuning) ==="
+uv run python examples/diffusion/generate/generate.py -c examples/diffusion/generate/configs/generate_sd3_base.yaml
+echo "=== Done ==="

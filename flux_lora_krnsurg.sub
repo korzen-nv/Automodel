@@ -1,0 +1,44 @@
+#!/bin/bash
+# FLUX.1-dev LoRA fine-tuning with krnsurg trigger + descriptive captions
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 04:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J flux-lora-v2
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE_USER=/lustre/fsw/portfolios/healthcareeng/users/pkorzeniowsk/automodel
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATA_DIR=${LUSTRE_PROJ}/data/atlas120k_flux
+OUTPUT_DIR=${LUSTRE_PROJ}/results/flux_lora_krnsurg_v2
+
+export UV_CACHE_DIR=${LUSTRE_USER}/.uv_cache
+export HF_HOME=${LUSTRE_USER}/.hf_cache
+export PATH=${HOME}/.local/bin:${PATH}
+export WANDB_MODE=disabled
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+
+cd ${AUTOMODEL_DIR}
+
+echo "=== Training corrected FLUX LoRA with krnsurg trigger ==="
+uv run python train_flux_lora.py \
+    --data_dir ${DATA_DIR} \
+    --output_dir ${OUTPUT_DIR} \
+    --model_id black-forest-labs/FLUX.1-dev \
+    --resolution 512 \
+    --train_batch_size 1 \
+    --num_epochs 10 \
+    --learning_rate 1e-4 \
+    --lora_rank 16 \
+    --lora_alpha 16 \
+    --gradient_accumulation_steps 4 \
+    --save_every_steps 2000 \
+    --seed 42 \
+    --gradient_checkpointing
