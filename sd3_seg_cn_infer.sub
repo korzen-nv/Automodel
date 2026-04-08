@@ -1,0 +1,46 @@
+#!/bin/bash
+# =============================================================================
+# SD3.5 ControlNet inference — generate from segmentation masks
+# =============================================================================
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 00:30:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -J sd3-cn-infer
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATA_ROOT=${LUSTRE_PROJ}/data/atlas120k_flux_seg_cn
+CONTROLNET_PATH=${CONTROLNET_PATH:-${LUSTRE_PROJ}/results/sd3_seg_cn_atlas120k/checkpoint-6000}
+TRANSFORMER_PATH=${TRANSFORMER_PATH:-${LUSTRE_PROJ}/results/sd3_atlas120k_v2/epoch_48_step_52527/model/consolidated}
+OUTPUT_DIR=${OUTPUT_DIR:-${LUSTRE_PROJ}/results/sd3_seg_cn_inference}
+
+export UV_CACHE_DIR=${LUSTRE_PROJ}/.uv_cache
+export HF_HOME=${LUSTRE_PROJ}/.hf_cache
+export HF_TOKEN=${HF_TOKEN:-}
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo ""
+
+cd ${AUTOMODEL_DIR}
+
+echo "=== Installing Python environment ==="
+uv sync --extra diffusion
+echo "=== Environment ready ==="
+
+echo "=== SD3.5 ControlNet inference ==="
+uv run python scripts/infer_sd3_controlnet.py \
+    --controlnet_path "${CONTROLNET_PATH}" \
+    --transformer_path "${TRANSFORMER_PATH}" \
+    --manifest "${DATA_ROOT}/manifests/val_eval.jsonl" \
+    --output_dir "${OUTPUT_DIR}" \
+    --num_samples 10 \
+    --seed 42
+echo "=== Done ==="

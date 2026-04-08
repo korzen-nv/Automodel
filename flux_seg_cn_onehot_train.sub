@@ -1,0 +1,78 @@
+#!/bin/bash
+# Train FLUX segmentation ControlNet with one-hot conditioning on cholecystectomy-only Atlas120k.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 04:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=30
+#SBATCH -J flux-seg-1h
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+set -euo pipefail
+
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATA_ROOT=${DATA_ROOT:-${LUSTRE_PROJ}/data/atlas120k_flux_seg_cn_chole_allsplits_onehot}
+MANIFEST=${MANIFEST:-${DATA_ROOT}/manifests/train.jsonl}
+CLASS_IDS_PATH=${CLASS_IDS_PATH:-${DATA_ROOT}/class_ids.json}
+OUTPUT_DIR=${OUTPUT_DIR:-${LUSTRE_PROJ}/results/flux_seg_cn_atlas120k_chole_onehot}
+DIFFUSERS_DIR=${DIFFUSERS_DIR:-${LUSTRE_PROJ}/external/diffusers}
+VENV_DIR=${VENV_DIR:-${LUSTRE_PROJ}/.venvs/flux-controlnet-py312}
+DIFFUSERS_REF=${DIFFUSERS_REF:-main}
+DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-8}
+MAX_TRAIN_STEPS=${MAX_TRAIN_STEPS:-12000}
+CHECKPOINTING_STEPS=${CHECKPOINTING_STEPS:-250}
+CHECKPOINTS_TOTAL_LIMIT=${CHECKPOINTS_TOTAL_LIMIT:-8}
+CONDITIONING_EMBEDDING_CHANNELS=${CONDITIONING_EMBEDDING_CHANNELS:-64}
+CONDITIONING_EMBEDDING_OUT_CHANNELS=${CONDITIONING_EMBEDDING_OUT_CHANNELS:-16,32,96,256}
+
+export HF_HOME=${LUSTRE_PROJ}/.hf_cache
+export HUGGINGFACE_HUB_CACHE=${HF_HOME}
+export TRANSFORMERS_CACHE=${HF_HOME}
+export PATH=${HOME}/.local/bin:${PATH}
+export TOKENIZERS_PARALLELISM=false
+export WANDB_MODE=disabled
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo "Train manifest: ${MANIFEST}"
+echo "Class ids:      ${CLASS_IDS_PATH}"
+echo "Output dir:     ${OUTPUT_DIR}"
+echo "Train steps:    ${MAX_TRAIN_STEPS}"
+
+cd ${AUTOMODEL_DIR}
+bash scripts/setup_flux_controlnet_env.sh "${DIFFUSERS_DIR}" "${VENV_DIR}" "${DIFFUSERS_REF}" "${AUTOMODEL_DIR}/.venv/bin/python"
+source "${VENV_DIR}/bin/activate"
+
+mkdir -p "${OUTPUT_DIR}"
+
+python train_flux_controlnet_onehot.py \
+  --pretrained_model_name_or_path black-forest-labs/FLUX.1-dev \
+  --manifest "${MANIFEST}" \
+  --output_dir "${OUTPUT_DIR}" \
+  --cache_dir "${HF_HOME}" \
+  --class_ids_path "${CLASS_IDS_PATH}" \
+  --train_batch_size 1 \
+  --dataloader_num_workers "${DATALOADER_NUM_WORKERS}" \
+  --max_train_steps "${MAX_TRAIN_STEPS}" \
+  --checkpointing_steps "${CHECKPOINTING_STEPS}" \
+  --checkpoints_total_limit "${CHECKPOINTS_TOTAL_LIMIT}" \
+  --learning_rate 1e-5 \
+  --lr_scheduler cosine \
+  --lr_warmup_steps 200 \
+  --resolution 512 \
+  --num_double_layers 4 \
+  --num_single_layers 0 \
+  --weighting_scheme logit_normal \
+  --conditioning_embedding_channels "${CONDITIONING_EMBEDDING_CHANNELS}" \
+  --conditioning_embedding_out_channels "${CONDITIONING_EMBEDDING_OUT_CHANNELS}" \
+  --gradient_checkpointing \
+  --allow_tf32 \
+  --mixed_precision bf16 \
+  --seed 42

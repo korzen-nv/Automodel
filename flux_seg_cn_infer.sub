@@ -1,0 +1,64 @@
+#!/bin/bash
+# FLUX ControlNet inference sweep over selected checkpoints.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 02:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=16
+#SBATCH -J flux-seg-cn-infer
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+set -euo pipefail
+
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATA_ROOT=${DATA_ROOT:-${LUSTRE_PROJ}/data/atlas120k_flux_seg_cn}
+MANIFEST=${MANIFEST:-${DATA_ROOT}/manifests/val_eval.jsonl}
+CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${LUSTRE_PROJ}/results/flux_seg_cn_atlas120k_eval_ckpts}
+OUTPUT_ROOT=${OUTPUT_ROOT:-${LUSTRE_PROJ}/results/flux_seg_cn_inference_eval}
+CHECKPOINTS=${CHECKPOINTS:-"1500 2500 3250"}
+NUM_SAMPLES=${NUM_SAMPLES:-10}
+DIFFUSERS_DIR=${DIFFUSERS_DIR:-${LUSTRE_PROJ}/external/diffusers}
+VENV_DIR=${VENV_DIR:-${LUSTRE_PROJ}/.venvs/flux-controlnet-py312}
+DIFFUSERS_REF=${DIFFUSERS_REF:-main}
+
+export HF_HOME=${LUSTRE_PROJ}/.hf_cache
+export HUGGINGFACE_HUB_CACHE=${HF_HOME}
+export TRANSFORMERS_CACHE=${HF_HOME}
+export PATH=${HOME}/.local/bin:${PATH}
+export TOKENIZERS_PARALLELISM=false
+export WANDB_MODE=disabled
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo "Manifest:       ${MANIFEST}"
+echo "Checkpoint dir: ${CHECKPOINT_ROOT}"
+echo "Output root:    ${OUTPUT_ROOT}"
+echo "Checkpoints:    ${CHECKPOINTS}"
+
+cd ${AUTOMODEL_DIR}
+bash scripts/setup_flux_controlnet_env.sh "${DIFFUSERS_DIR}" "${VENV_DIR}" "${DIFFUSERS_REF}" "${AUTOMODEL_DIR}/.venv/bin/python"
+source "${VENV_DIR}/bin/activate"
+
+mkdir -p "${OUTPUT_ROOT}"
+
+for ckpt in ${CHECKPOINTS}; do
+  CONTROLNET_PATH="${CHECKPOINT_ROOT}/checkpoint-${ckpt}/flux_controlnet"
+  OUTPUT_DIR="${OUTPUT_ROOT}/checkpoint-${ckpt}"
+
+  echo "=== FLUX ControlNet inference: checkpoint-${ckpt} ==="
+  python scripts/infer_flux_controlnet.py \
+    --controlnet_path "${CONTROLNET_PATH}" \
+    --manifest "${MANIFEST}" \
+    --output_dir "${OUTPUT_DIR}" \
+    --num_samples "${NUM_SAMPLES}" \
+    --seed 42
+done
+
+echo "=== Done ==="

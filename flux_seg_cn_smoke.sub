@@ -1,0 +1,72 @@
+#!/bin/bash
+# 1-GPU smoke test for FLUX segmentation ControlNet on Atlas120k.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 01:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=16
+#SBATCH -J flux-seg-smoke
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+set -euo pipefail
+
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATA_ROOT=${DATA_ROOT:-${LUSTRE_PROJ}/data/atlas120k_flux_seg_cn}
+MANIFEST=${MANIFEST:-${DATA_ROOT}/manifests/train.jsonl}
+OUTPUT_DIR=${OUTPUT_DIR:-${LUSTRE_PROJ}/results/flux_seg_cn_atlas120k_smoke}
+DIFFUSERS_DIR=${DIFFUSERS_DIR:-${LUSTRE_PROJ}/external/diffusers}
+VENV_DIR=${VENV_DIR:-${LUSTRE_PROJ}/.venvs/flux-controlnet-py312}
+DIFFUSERS_REF=${DIFFUSERS_REF:-main}
+
+export HF_HOME=${LUSTRE_PROJ}/.hf_cache
+export HUGGINGFACE_HUB_CACHE=${HF_HOME}
+export TRANSFORMERS_CACHE=${HF_HOME}
+export PATH=${HOME}/.local/bin:${PATH}
+export TOKENIZERS_PARALLELISM=false
+export WANDB_MODE=disabled
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo "Train manifest: ${MANIFEST}"
+echo "Output dir:     ${OUTPUT_DIR}"
+
+cd ${AUTOMODEL_DIR}
+bash scripts/setup_flux_controlnet_env.sh "${DIFFUSERS_DIR}" "${VENV_DIR}" "${DIFFUSERS_REF}" "${AUTOMODEL_DIR}/.venv/bin/python"
+source "${VENV_DIR}/bin/activate"
+
+mkdir -p "${OUTPUT_DIR}"
+
+python "${DIFFUSERS_DIR}/examples/controlnet/train_controlnet_flux.py" \
+  --pretrained_model_name_or_path black-forest-labs/FLUX.1-dev \
+  --jsonl_for_train "${MANIFEST}" \
+  --image_column image \
+  --conditioning_image_column conditioning_image \
+  --caption_column text \
+  --output_dir "${OUTPUT_DIR}" \
+  --cache_dir "${HF_HOME}" \
+  --report_to tensorboard \
+  --mixed_precision bf16 \
+  --train_batch_size 1 \
+  --gradient_accumulation_steps 1 \
+  --dataloader_num_workers 4 \
+  --max_train_samples 64 \
+  --max_train_steps 20 \
+  --checkpointing_steps 20 \
+  --checkpoints_total_limit 2 \
+  --learning_rate 1e-5 \
+  --lr_scheduler cosine \
+  --lr_warmup_steps 5 \
+  --resolution 512 \
+  --num_double_layers 4 \
+  --num_single_layers 0 \
+  --weighting_scheme logit_normal \
+  --gradient_checkpointing \
+  --allow_tf32 \
+  --seed 42

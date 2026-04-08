@@ -1,0 +1,84 @@
+#!/bin/bash
+# Build Atlas120k manifests and segmentation control PNGs for FLUX ControlNet.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 04:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=30
+#SBATCH -J flux-seg-prep
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATASET_ROOT=${DATASET_ROOT:-/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/datasets/atlas120k/atlas120k/train}
+OUTPUT_DIR=${OUTPUT_DIR:-${LUSTRE_PROJ}/data/atlas120k_flux_seg_cn}
+FRAME_STRIDE=${FRAME_STRIDE:-5}
+VAL_CLIP_FRACTION=${VAL_CLIP_FRACTION:-0.03}
+EVAL_EXAMPLES=${EVAL_EXAMPLES:-24}
+LIMIT_CLIPS=${LIMIT_CLIPS:-}
+INCLUDE_SPLITS=${INCLUDE_SPLITS:-}
+PROCEDURE_FILTER=${PROCEDURE_FILTER:-}
+CLASS_PRESET=${CLASS_PRESET:-full}
+TRAIN_ON_ALL_ROWS=${TRAIN_ON_ALL_ROWS:-0}
+FIXED_CAPTION=${FIXED_CAPTION:-}
+CONDITIONING_FORMAT=${CONDITIONING_FORMAT:-rgb_png}
+
+export UV_CACHE_DIR=${LUSTRE_PROJ}/.uv_cache
+export HF_HOME=${LUSTRE_PROJ}/.hf_cache
+export PATH=${HOME}/.local/bin:${PATH}
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo "Dataset root: ${DATASET_ROOT}"
+echo "Output dir:   ${OUTPUT_DIR}"
+echo "Frame stride: ${FRAME_STRIDE}"
+echo "Class preset: ${CLASS_PRESET}"
+echo "All rows:     ${TRAIN_ON_ALL_ROWS}"
+echo "Fixed caption:${FIXED_CAPTION}"
+echo "Cond format:  ${CONDITIONING_FORMAT}"
+
+cd ${AUTOMODEL_DIR}
+
+ARGS=(
+  --dataset_root "${DATASET_ROOT}"
+  --output_dir "${OUTPUT_DIR}"
+  --frame_stride "${FRAME_STRIDE}"
+  --val_clip_fraction "${VAL_CLIP_FRACTION}"
+  --eval_examples "${EVAL_EXAMPLES}"
+)
+
+if [ -n "${LIMIT_CLIPS}" ]; then
+  ARGS+=(--limit_clips "${LIMIT_CLIPS}")
+fi
+
+if [ -n "${INCLUDE_SPLITS}" ]; then
+  IFS=',' read -r -a SPLITS <<< "${INCLUDE_SPLITS}"
+  ARGS+=(--include_splits "${SPLITS[@]}")
+fi
+
+if [ -n "${PROCEDURE_FILTER}" ]; then
+  IFS=',' read -r -a PROCEDURES <<< "${PROCEDURE_FILTER}"
+  ARGS+=(--procedure_filter "${PROCEDURES[@]}")
+fi
+
+if [ -n "${CLASS_PRESET}" ]; then
+  ARGS+=(--class_preset "${CLASS_PRESET}")
+fi
+
+if [ "${TRAIN_ON_ALL_ROWS}" = "1" ]; then
+  ARGS+=(--train_on_all_rows)
+fi
+
+if [ -n "${FIXED_CAPTION}" ]; then
+  ARGS+=(--fixed_caption "${FIXED_CAPTION}")
+fi
+
+if [ -n "${CONDITIONING_FORMAT}" ]; then
+  ARGS+=(--conditioning_format "${CONDITIONING_FORMAT}")
+fi
+
+uv run python scripts/build_atlas120k_flux_seg_cn.py "${ARGS[@]}"

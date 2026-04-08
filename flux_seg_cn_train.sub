@@ -1,0 +1,85 @@
+#!/bin/bash
+# Train FLUX segmentation ControlNet on Atlas120k using diffusers.
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 04:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=8
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=64
+#SBATCH -J flux-seg-cn
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+set -euo pipefail
+
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATA_ROOT=${DATA_ROOT:-${LUSTRE_PROJ}/data/atlas120k_flux_seg_cn}
+MANIFEST=${MANIFEST:-${DATA_ROOT}/manifests/train.jsonl}
+OUTPUT_DIR=${OUTPUT_DIR:-${LUSTRE_PROJ}/results/flux_seg_cn_atlas120k}
+DIFFUSERS_DIR=${DIFFUSERS_DIR:-${LUSTRE_PROJ}/external/diffusers}
+VENV_DIR=${VENV_DIR:-${LUSTRE_PROJ}/.venvs/flux-controlnet-py312}
+DIFFUSERS_REF=${DIFFUSERS_REF:-main}
+NUM_PROCESSES=${NUM_PROCESSES:-8}
+DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-8}
+MAX_TRAIN_STEPS=${MAX_TRAIN_STEPS:-6000}
+CHECKPOINTING_STEPS=${CHECKPOINTING_STEPS:-1000}
+CHECKPOINTS_TOTAL_LIMIT=${CHECKPOINTS_TOTAL_LIMIT:-8}
+MAIN_PROCESS_PORT=${MAIN_PROCESS_PORT:-29500}
+
+export HF_HOME=${LUSTRE_PROJ}/.hf_cache
+export HUGGINGFACE_HUB_CACHE=${HF_HOME}
+export TRANSFORMERS_CACHE=${HF_HOME}
+export PATH=${HOME}/.local/bin:${PATH}
+export TOKENIZERS_PARALLELISM=false
+export WANDB_MODE=disabled
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo "Train manifest: ${MANIFEST}"
+echo "Output dir:     ${OUTPUT_DIR}"
+echo "Processes:      ${NUM_PROCESSES}"
+echo "Train steps:    ${MAX_TRAIN_STEPS}"
+
+cd ${AUTOMODEL_DIR}
+bash scripts/setup_flux_controlnet_env.sh "${DIFFUSERS_DIR}" "${VENV_DIR}" "${DIFFUSERS_REF}" "${AUTOMODEL_DIR}/.venv/bin/python"
+source "${VENV_DIR}/bin/activate"
+
+mkdir -p "${OUTPUT_DIR}"
+
+python -m accelerate.commands.launch \
+  --num_processes "${NUM_PROCESSES}" \
+  --num_machines 1 \
+  --main_process_port "${MAIN_PROCESS_PORT}" \
+  --mixed_precision bf16 \
+  "${DIFFUSERS_DIR}/examples/controlnet/train_controlnet_flux.py" \
+  --pretrained_model_name_or_path black-forest-labs/FLUX.1-dev \
+  --jsonl_for_train "${MANIFEST}" \
+  --image_column image \
+  --conditioning_image_column conditioning_image \
+  --caption_column text \
+  --output_dir "${OUTPUT_DIR}" \
+  --cache_dir "${HF_HOME}" \
+  --report_to tensorboard \
+  --mixed_precision bf16 \
+  --train_batch_size 1 \
+  --gradient_accumulation_steps 1 \
+  --dataloader_num_workers "${DATALOADER_NUM_WORKERS}" \
+  --max_train_steps "${MAX_TRAIN_STEPS}" \
+  --checkpointing_steps "${CHECKPOINTING_STEPS}" \
+  --checkpoints_total_limit "${CHECKPOINTS_TOTAL_LIMIT}" \
+  --learning_rate 1e-5 \
+  --lr_scheduler cosine \
+  --lr_warmup_steps 200 \
+  --resolution 512 \
+  --num_double_layers 4 \
+  --num_single_layers 0 \
+  --weighting_scheme logit_normal \
+  --gradient_checkpointing \
+  --allow_tf32 \
+  --enable_model_cpu_offload \
+  --seed 42

@@ -125,6 +125,89 @@ Generated 5 images per checkpoint to visualize training progression:
 | Checkpoints v2 | `${LUSTRE}/results/sd3_atlas120k_v2/` |
 | Login node | `draco-oci-login-01.draco-oci-iad.nvidia.com` |
 
+---
+
+## Segmentation ControlNet
+
+### Goal
+Train an SD3.5 ControlNet conditioned on segmentation masks so the model can generate surgical images that follow a given anatomical layout (46 labeled structures from Atlas120k).
+
+### Architecture
+- **Model**: `SD3ControlNetModel` initialized from SD3.5-Large transformer via `from_transformer()`
+- **Training**: Uses diffusers' `train_controlnet_sd3.py` directly (not NeMo AutoModel)
+- **Conditioning**: RGB segmentation masks → VAE-encoded → PatchEmbed → added to latent hidden states
+- **Frozen components**: SD3 transformer, VAE, 3 text encoders. Only ControlNet parameters train.
+- **Loss**: Flow matching (same as base SD3.5 training)
+
+### Dataset
+- **Source**: Atlas120k segmentation masks (46 anatomical classes, 14 surgical procedures)
+- **Location**: `/lustre/fs11/.../data/atlas120k_flux_seg_cn/` (model-agnostic, works for both FLUX and SD3.5)
+- **Samples**: 16,679 training samples (every 5th frame)
+- **Format**: HF parquet dataset with Image-typed columns (`image`, `conditioning_image`, `text`)
+- **Captions**: Auto-generated from visible structures (e.g., "A laparoscopic view during cholecystectomy showing liver, gallbladder, cystic duct with surgical instruments visible")
+
+### Training Config
+| Parameter | Value |
+|-----------|-------|
+| Base model | `stabilityai/stable-diffusion-3.5-large` |
+| GPUs | 1x A100-80GB (multi-GPU OOMs due to model size) |
+| Resolution | 512 |
+| Batch size | 1 |
+| Gradient accumulation | 4 |
+| Learning rate | 1e-5, cosine schedule, 200 warmup |
+| Max steps | 6,000 |
+| Checkpoint interval | 1,000 steps |
+| Gradient checkpointing | Enabled |
+| Weighting scheme | logit_normal |
+| Training speed | ~1.6 s/step (~2.7 hours for 6,000 steps) |
+
+### Training Runs
+
+| Job ID | Status | Notes |
+|--------|--------|-------|
+| 9052391 | FAILED | `--jsonl_for_train` unrecognized (FLUX-specific arg) |
+| 9052503 | FAILED | `--controlnet_model_name_or_path` tried to load ControlNet from SD3.5 repo |
+| 9052857 | FAILED | Missing HF_TOKEN for gated model access |
+| 9053017 | FAILED | HF_HUB_CACHE not pointing to correct hub/ subdir |
+| 9053057 | FAILED | Same cache issue |
+| 9058034 | FAILED (20min) | Dataset Image type issue — `.convert("RGB")` on string paths |
+| 9058258 | FAILED | `save_to_disk` format incompatible with `load_dataset()` |
+| 9058446 | FAILED (20min) | OOM on 8 GPUs at 512 resolution |
+| 9058587 | FAILED | OOM on 8 GPUs at 256 resolution |
+| 9058678 | FAILED | SD3.5-medium not cached |
+| 9058727 | FAILED | OOM on 8 GPUs at 256 resolution |
+| 9058869 | CANCELLED (31min) | **Training working!** 378/6000 steps, 1.6s/step, loss=0.19. Preempted. |
+| 9060332 | RUNNING | Resubmit of working config |
+
+### Key Findings — ControlNet
+
+1. **Memory**: SD3.5-Large + ControlNet does NOT fit on multi-GPU with accelerate DDP. Each rank replicates the full frozen transformer + ControlNet + 3 text encoders + VAE. **Single GPU with gradient checkpointing + grad accum 4 works** on A100-80GB.
+2. **Dataset format**: The SD3 training script expects HF `datasets` with `Image` feature type (returns PIL Images). Our JSONL manifests have string paths. Fix: convert to parquet with `cast_column('image', Image())` before training.
+3. **`--controlnet_model_name_or_path`**: Omit this to initialize ControlNet from the transformer via `from_transformer()`. Passing the base model ID tries to load a non-existent ControlNet.
+4. **HF gated models**: `HF_TOKEN` must be set AND `HF_HUB_CACHE` must point to `${HF_HOME}/hub` (not just `${HF_HOME}`) for the diffusers venv to find cached model files.
+5. **FLUX vs SD3 training scripts**: Different CLI args — FLUX uses `--jsonl_for_train`, `--num_double_layers`, `--enable_model_cpu_offload`; SD3 uses `--train_data_dir`/`--dataset_name`, has no layer count or offload args.
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `scripts/setup_sd3_controlnet_env.sh` | Bootstrap venv + diffusers clone for SD3 ControlNet |
+| `sd3_seg_cn_train.sub` | SLURM: 1-GPU ControlNet training |
+| `sd3_seg_cn_infer.sub` | SLURM: inference with ControlNet + fine-tuned transformer |
+| `scripts/infer_sd3_controlnet.py` | Standalone inference (saves generated + control side-by-side) |
+
+### Cluster Paths — ControlNet
+
+| Resource | Path |
+|----------|------|
+| Seg dataset | `/lustre/fs11/.../data/atlas120k_flux_seg_cn/` |
+| Parquet cache | `/lustre/fs11/.../data/atlas120k_flux_seg_cn/hf_parquet/` |
+| Training output | `${LUSTRE}/results/sd3_seg_cn_atlas120k/` |
+| Diffusers clone | `${LUSTRE}/external/diffusers` |
+| Venv | `${LUSTRE}/.venvs/sd3-controlnet-py312` |
+
+---
+
 ## Lessons Learned
 
 1. **SD3.5 text rendering**: Using a bare trigger word as caption causes SD3.5 to render it as text in images. Use descriptive captions + negative prompt `"text, letters, watermark"`.
@@ -134,3 +217,5 @@ Generated 5 images per checkpoint to visualize training progression:
 5. **FLUX cache not compatible with SD3.5**: Different pooled projection dimensions (768 vs 2048) and different VAE latent spaces require separate preprocessing.
 6. **Convergence speed**: Major quality gains in first 10 epochs, plateau after 20. Future runs can use 20-30 epochs.
 7. **Base model comparison**: SD3.5 base already knows what surgery looks like from pretraining, but produces generic/wrong-domain results. Fine-tuning on domain data is essential for realistic endoscopic imagery.
+8. **ControlNet memory**: SD3.5-Large ControlNet training requires single-GPU (DDP replicates both frozen transformer + trainable ControlNet on each rank). 1x A100-80GB with gradient checkpointing + grad accum 4 at 512 resolution works.
+9. **Dataset format for diffusers ControlNet scripts**: Must use HF `datasets` with `Image` feature columns (PIL Image objects), not string file paths. Convert JSONL to parquet with `cast_column('image', Image())`.

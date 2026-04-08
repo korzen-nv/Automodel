@@ -1,0 +1,102 @@
+#!/bin/bash
+# =============================================================================
+# Train SD3.5 segmentation ControlNet on Atlas120k using diffusers
+# =============================================================================
+
+#SBATCH -A healthcareeng_holoscan
+#SBATCH -p batch_singlenode
+#SBATCH -t 04:00:00
+#SBATCH -N 1
+#SBATCH --gpus-per-node=8
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=64
+#SBATCH -J sd3-seg-cn
+#SBATCH --output=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.out
+#SBATCH --error=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel/slurm_jobs/%x_%j.err
+
+set -euo pipefail
+
+LUSTRE_PROJ=/lustre/fsw/portfolios/healthcareeng/projects/healthcareeng_holoscan/users/pkorzeniowsk/automodel
+AUTOMODEL_DIR=${LUSTRE_PROJ}/Automodel
+DATA_ROOT=${DATA_ROOT:-${LUSTRE_PROJ}/data/atlas120k_flux_seg_cn}
+MANIFEST=${MANIFEST:-${DATA_ROOT}/manifests/train.jsonl}
+OUTPUT_DIR=${OUTPUT_DIR:-${LUSTRE_PROJ}/results/sd3_seg_cn_atlas120k}
+DIFFUSERS_DIR=${DIFFUSERS_DIR:-${LUSTRE_PROJ}/external/diffusers}
+VENV_DIR=${VENV_DIR:-${LUSTRE_PROJ}/.venvs/sd3-controlnet-py312}
+DIFFUSERS_REF=${DIFFUSERS_REF:-main}
+
+export HF_HOME=${LUSTRE_PROJ}/.hf_cache
+export HF_HUB_CACHE=${HF_HOME}/hub
+export HUGGINGFACE_HUB_CACHE=${HF_HOME}/hub
+export TRANSFORMERS_CACHE=${HF_HOME}
+# Read HF token from cache if not set in env
+if [ -z "${HF_TOKEN:-}" ] && [ -f "${HF_HOME}/token" ]; then
+    export HF_TOKEN=$(cat "${HF_HOME}/token")
+fi
+export PATH=${HOME}/.local/bin:${PATH}
+export TOKENIZERS_PARALLELISM=false
+export WANDB_MODE=disabled
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+echo "Host: $(hostname)"
+nvidia-smi -L
+echo "Train manifest: ${MANIFEST}"
+echo "Output dir:     ${OUTPUT_DIR}"
+
+cd ${AUTOMODEL_DIR}
+bash scripts/setup_sd3_controlnet_env.sh "${DIFFUSERS_DIR}" "${VENV_DIR}" "${DIFFUSERS_REF}" "${AUTOMODEL_DIR}/.venv/bin/python"
+source "${VENV_DIR}/bin/activate"
+
+mkdir -p "${OUTPUT_DIR}"
+
+# Build a proper HF dataset with Image-typed columns from our JSONL manifest.
+# The SD3 training script expects PIL Images from the dataset, not file paths.
+# We load as JSON, cast both image columns to Image type, then save in a format
+# that load_dataset can read (parquet with embedded image bytes).
+HF_DATA_DIR=${DATA_ROOT}/hf_parquet
+if [ ! -f "${HF_DATA_DIR}/train-00000-of-00001.parquet" ]; then
+    python -c "
+from datasets import load_dataset, Image
+from pathlib import Path
+
+ds = load_dataset('json', data_files='${MANIFEST}', split='train')
+ds = ds.cast_column('image', Image())
+ds = ds.cast_column('conditioning_image', Image())
+
+Path('${HF_DATA_DIR}').mkdir(parents=True, exist_ok=True)
+ds.to_parquet('${HF_DATA_DIR}/train-00000-of-00001.parquet')
+print(f'Saved parquet dataset with {len(ds)} samples')
+print(f'Features: {ds.features}')
+"
+else
+    echo "Parquet dataset already exists at ${HF_DATA_DIR}"
+fi
+
+python -m accelerate.commands.launch \
+  --num_processes 1 \
+  --num_machines 1 \
+  --mixed_precision bf16 \
+  "${DIFFUSERS_DIR}/examples/controlnet/train_controlnet_sd3.py" \
+  --pretrained_model_name_or_path stabilityai/stable-diffusion-3.5-large \
+  --dataset_name "${HF_DATA_DIR}" \
+  --image_column image \
+  --conditioning_image_column conditioning_image \
+  --caption_column text \
+  --output_dir "${OUTPUT_DIR}" \
+  --cache_dir "${HF_HOME}" \
+  --report_to tensorboard \
+  --mixed_precision bf16 \
+  --train_batch_size 1 \
+  --gradient_accumulation_steps 4 \
+  --dataloader_num_workers 4 \
+  --max_train_steps 6000 \
+  --checkpointing_steps 1000 \
+  --checkpoints_total_limit 8 \
+  --learning_rate 1e-5 \
+  --lr_scheduler cosine \
+  --lr_warmup_steps 200 \
+  --resolution 512 \
+  --weighting_scheme logit_normal \
+  --gradient_checkpointing \
+  --allow_tf32 \
+  --seed 42
